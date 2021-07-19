@@ -1,0 +1,43 @@
+# Copyright 2021 Cloudera, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+
+- name: Include variables
+  include_vars:
+    file: "{{ ansible_os_family }}.yml"
+
+- name: Install {{ httpd_package }}
+  ansible.builtin.package:
+    lock_timeout: 60
+    name: "{{ httpd_package }}"
+    state: present
+
+# Runs before tars process in case you are rehosting tars
+- name: Populate parcel repository contents from a Download Mirror
+  when: custom_repo_rehost_files
+  include_tasks: rehost_files_from_download.yml
+
+# Upload files directly from Ansible Controller to custom repo
+- name: Populate parcel repository contents from tars on Ansible controller
+  include_tasks: install_parcels_from_tars_on_controller.yml
+  loop: "{{ repo_tar_files }}"
+  loop_control:
+    loop_var: repo_tar_file
+
+- name: Start and enable httpd
+  service:
+    name: "{{ httpd_service }}"
+    enabled: yes
+    state: restarted

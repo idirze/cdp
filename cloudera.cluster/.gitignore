@@ -1,0 +1,7 @@
+.idea
+.vscode
+test*
+*.pyc
+*.bak
+.DS_Store
+venv

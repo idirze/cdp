@@ -1,0 +1,85 @@
+# Copyright 2021 Cloudera, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+---
+- name: Query for KTS Cluster
+  set_fact:
+    kts_cluster: "{{ definition.clusters | json_query('[?type==`kts`]') | first }}"
+
+- name: Check Cluster and Inventory suitable for KTS
+  ansible.builtin.assert:
+    that:
+      - kts_cluster.name is defined
+      - groups.kts_passive is defined
+      - groups.kts_active is defined
+    fail_msg: "Cluster type kts not present or expected kts_active and kts_passive not present"
+
+- name: Create temp directory for keys
+  file:
+    path: "{{ local_temp_dir }}/kts"
+    owner: root
+    group: root
+    state: directory
+    mode: 0777
+
+- name: Fetch GPG keys and configs from active Key Trustee Server
+  delegate_to: "{{ groups.kts_active | first }}"
+  fetch:
+    src: "{{ keytrustee_server_conf_dir }}/{{ item }}"
+    dest: "{{ local_temp_dir }}/kts"
+  loop: "{{ keytrustee_server_key_files }}"
+
+- name: Copy to passive Key Trustee Server
+  delegate_to: "{{ groups.kts_passive | first }}"
+  copy:
+    src: "{{ local_temp_dir }}/kts/{{ inventory_hostname }}{{ keytrustee_server_conf_dir }}/"
+    dest: "{{ keytrustee_server_conf_dir }}"
+    owner: keytrustee
+    group: keytrustee
+    mode: 0600
+
+- name: Delete temp directory
+  file:
+    path: "{{ local_temp_dir }}/kts"
+    state: absent
+
+- name: Initialize passive Key Trustee Server
+  delegate_to: "{{ groups.kts_passive | first }}"
+  shell: ktadmin init --confdir {{ keytrustee_server_conf_dir }}
+
+- name: Start Key Trustee Server service
+  cloudera.cluster.cm_api:
+    endpoint: /clusters/{{ kts_cluster.name | urlencode() }}/services/keytrustee_server/commands/restart
+    method: POST
+  when: kts_cluster.name is defined
+
+- name: Setup Key Trustee Server database replication
+  cloudera.cluster.cm_api:
+    endpoint: /clusters/{{ kts_cluster.name | urlencode() }}/services/keytrustee_server/commands/SetupSyncReplicationCommand
+    method: POST
+  when: kts_cluster.name is defined
+
+- name: Restart Key Trustee Server service
+  cloudera.cluster.cm_api:
+    endpoint: /clusters/{{ kts_cluster.name | urlencode() }}/services/keytrustee_server/commands/restart
+    method: POST
+  when: kts_cluster.name is defined
+
+- name: Create Key Trustee Server organisation
+  delegate_to: "{{ groups.kts_active | first }}"
+  shell: >
+    keytrustee-orgtool add
+    -n {{ keytrustee_server_org_name }}
+    -c {{ keytrustee_server_org_email }}
+    --confdir {{ keytrustee_server_conf_dir }}
